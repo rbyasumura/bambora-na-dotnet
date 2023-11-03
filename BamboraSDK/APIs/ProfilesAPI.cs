@@ -20,385 +20,409 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 //
-using System;
-using Bambora.NA.SDK;
 using Bambora.NA.SDK.Data;
-using System.Collections.Generic;
 using Bambora.NA.SDK.Domain;
 using Bambora.NA.SDK.Requests;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
 
 /// <summary>
 /// Payment Profiles allow you to store a customer's card number and other information, such as billing address and shipping address.
 /// The card number stored on the profile is a multi-use token and is called the ID.
-/// 
+///
 /// Profiles can be created with a Credit Card or with a single-use Legato token. If using a token then the card information
 /// needs to be entered each time the user checks out. However the profile will always save the customer's billing info.
 /// </summary>
 namespace Bambora.NA.SDK
 {
-	public class ProfilesAPI
-	{
-		private Configuration _configuration;
-		private IWebCommandExecuter _webCommandExecuter = new WebCommandExecuter ();
+    public class ProfilesAPI
+    {
+        private readonly ILogger _logger;
+        private Configuration _configuration;
+        private IWebCommandExecuter _webCommandExecuter = new WebCommandExecuter();
 
-		public Configuration Configuration {
-			set { _configuration = value; }
-		}
+        public ProfilesAPI(
+            ILogger logger)
+        {
+            _logger = logger;
+        }
 
-		public IWebCommandExecuter WebCommandExecuter {
-			set { _webCommandExecuter = value; }
-		}
+        public Configuration Configuration
+        {
+            set { _configuration = value; }
+        }
 
-		/// <summary>
-		/// Create a Payment Profile with a Credit Card and billing address
-		/// </summary>
-		/// <returns>The profile response containing the profile ID</returns>
-		/// <param name="card">Card.</param>
-		/// <param name="billingAddress">Billing address.</param>
-		public ProfileResponse CreateProfile(Card card, Address billingAddress) {
-			return CreateProfile (card, billingAddress, null, null, null);
-		}
+        public IWebCommandExecuter WebCommandExecuter
+        {
+            set { _webCommandExecuter = value; }
+        }
 
-		/// <summary>
-		/// Create a Payment Profile with a Credit Card and billing address
-		/// </summary>
-		/// <returns>The profile response containing the profile ID</returns>
-		/// <param name="card">Card.</param>
-		/// <param name="billingAddress">Billing address.</param>
-		/// <param name="customFields">Custom fields. Optional</param>
-		/// <param name="language">Language. Optional</param>
-		/// <param name="comment">Comment. Optional</param>
-		public ProfileResponse CreateProfile(Card card, Address billingAddress, CustomFields customFields, string language, string comment) {
-			return CreateProfile (null, card, billingAddress, customFields, language, comment);
-		}
+        /// <summary>
+        /// Add a new card to the profile. It gets appended to the end of the list of cards.
+        /// Make sure your Merchant account can support more cards. The default amount is 1.
+        /// You can change this limit in the online Members area for Merchants located at:
+        /// https://web.na.bambora.com/admin/sDefault.asp
+        /// and heading to Configuration -> Payment Profile Configuration
+        /// </summary>
+        /// <returns>The response</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        /// <param name="card">Card.</param>
+        public ProfileResponse AddCard(string profileId, Card card)
+        {
+            string url = BamboraUrls.CardsUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                .Replace("{id}", profileId);
 
-		/// <summary>
-		/// Create a Payment Profile with a single-use Legato token.
-		/// </summary>
-		/// <returns>TThe profile response containing the profile ID</returns>
-		/// <param name="token">Token.</param>
-		/// <param name="billingAddress">Billing address.</param>
-		public ProfileResponse CreateProfile(Token token, Address billingAddress) {
-			return CreateProfile (token, billingAddress, null, null, null);
-		}
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-		/// <summary>
-		/// Create a Payment Profile with a single-use Legato token.
-		/// </summary>
-		/// <returns>TThe profile response containing the profile ID</returns>
-		/// <param name="token">Token.</param>
-		/// <param name="billingAddress">Billing address.</param>
-		/// <param name="customFields">Custom fields. Optional</param>
-		/// <param name="language">Language. Optional</param>
-		/// <param name="comment">Comment. Optional</param>
-		public ProfileResponse CreateProfile(Token token, Address billingAddress, CustomFields customFields, string language, string comment) {
-			return CreateProfile (token, null, billingAddress, customFields, language, comment);
-		}
+            // the json wants to be wrapped in a 'card' group
+            var c = new
+            {
+                card
+            };
 
-		private ProfileResponse CreateProfile(Token token, Card card, Address billingAddress, CustomFields customFields, string language, string comment) {
+            string response = req.ProcessTransaction(HttpMethod.Post, url, c);
+            return JsonConvert.DeserializeObject<ProfileResponse>(response);
+        }
 
-			if (token == null && card == null) {
-				Gateway.ThrowIfNullArgument (null, "Card and Token both null!");
-			}
+        /// <summary>
+        /// Add a new tokenized card to the profile. It gets appended to the end of the list of cards.
+        /// Make sure your Merchant account can support more cards. The default amount is 1.
+        /// You can change this limit in the online Members area for Merchants located at:
+        /// https://web.na.bambora.com/admin/sDefault.asp
+        /// and heading to Configuration -> Payment Profile Configuration
+        /// </summary>
+        /// <returns>The response</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        /// <param name="card">Card.</param>
+        public ProfileResponse AddCard(string profileId, Token token)
+        {
+            string url = BamboraUrls.CardsUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                .Replace("{id}", profileId);
 
-			if (token == null) {
-				Gateway.ThrowIfNullArgument (card, "card");
-				Gateway.ThrowIfNullArgument (card.Number, "card.number");
-				Gateway.ThrowIfNullArgument (card.Name, "card.name");
-				Gateway.ThrowIfNullArgument (card.ExpiryMonth, "card.expiryMonth");
-				Gateway.ThrowIfNullArgument (card.ExpiryYear, "card.expiryYear");
-			}
-			if (card == null) {
-				Gateway.ThrowIfNullArgument (token, "token");
-				Gateway.ThrowIfNullArgument (token.Name, "token.name");
-				Gateway.ThrowIfNullArgument (token.Code, "token.code");
-			}
-				
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			string url = BamboraUrls.BaseProfilesUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform);
+            // the json wants to be wrapped in a 'token' group
+            var c = new
+            {
+                token
+            };
 
+            string response = req.ProcessTransaction(HttpMethod.Post, url, c);
+            return JsonConvert.DeserializeObject<ProfileResponse>(response);
+        }
 
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
+        /// <summary>
+        /// Create a Payment Profile with a Credit Card and billing address
+        /// </summary>
+        /// <returns>The profile response containing the profile ID</returns>
+        /// <param name="card">Card.</param>
+        /// <param name="billingAddress">Billing address.</param>
+        public ProfileResponse CreateProfile(Card card, Address billingAddress)
+        {
+            return CreateProfile(card, billingAddress, null, null, null);
+        }
 
-			var profile = new {
-				card = card,
-				token = token,
-				billing = billingAddress,
-				custom = customFields
-			};
+        /// <summary>
+        /// Create a Payment Profile with a Credit Card and billing address
+        /// </summary>
+        /// <returns>The profile response containing the profile ID</returns>
+        /// <param name="card">Card.</param>
+        /// <param name="billingAddress">Billing address.</param>
+        /// <param name="customFields">Custom fields. Optional</param>
+        /// <param name="language">Language. Optional</param>
+        /// <param name="comment">Comment. Optional</param>
+        public ProfileResponse CreateProfile(Card card, Address billingAddress, CustomFields customFields, string language, string comment)
+        {
+            return CreateProfile(null, card, billingAddress, customFields, language, comment);
+        }
 
-			string response = req.ProcessTransaction (HttpMethod.Post, url, profile);
+        /// <summary>
+        /// Create a Payment Profile with a single-use Legato token.
+        /// </summary>
+        /// <returns>TThe profile response containing the profile ID</returns>
+        /// <param name="token">Token.</param>
+        /// <param name="billingAddress">Billing address.</param>
+        public ProfileResponse CreateProfile(Token token, Address billingAddress)
+        {
+            return CreateProfile(token, billingAddress, null, null, null);
+        }
 
-			return JsonConvert.DeserializeObject<ProfileResponse>(response);
-		}
+        /// <summary>
+        /// Create a Payment Profile with a single-use Legato token.
+        /// </summary>
+        /// <returns>TThe profile response containing the profile ID</returns>
+        /// <param name="token">Token.</param>
+        /// <param name="billingAddress">Billing address.</param>
+        /// <param name="customFields">Custom fields. Optional</param>
+        /// <param name="language">Language. Optional</param>
+        /// <param name="comment">Comment. Optional</param>
+        public ProfileResponse CreateProfile(Token token, Address billingAddress, CustomFields customFields, string language, string comment)
+        {
+            return CreateProfile(token, null, billingAddress, customFields, language, comment);
+        }
 
-		/// <summary>
-		/// Retrieve a profile using the profile's ID. If you want to modify a profile
-		/// you must first retrieve it using this method.
-		/// </summary>
-		/// <returns>The profile.</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		public PaymentProfile GetProfile(string profileId) {
-		
-			string url = BamboraUrls.BaseProfilesUrl
-				.Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v"+_configuration.Version)
-				.Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
-				+"/"+profileId;
+        /// <summary>
+        /// Deletes the profile.
+        /// </summary>
+        /// <returns>The profile response if successful, an error if not.</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        public ProfileResponse DeleteProfile(string profileId)
+        {
+            string url = BamboraUrls.BaseProfilesUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                + "/" + profileId;
 
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
+            string response = req.ProcessTransaction(HttpMethod.Delete, url);
+            return JsonConvert.DeserializeObject<ProfileResponse>(response);
+        }
 
-			string response = req.ProcessTransaction (HttpMethod.Get, url);
-			PaymentProfile profile = JsonConvert.DeserializeObject<PaymentProfile>(response);
-			profile.Id = profileId;
-			return profile;
-		}
+        /// <summary>
+        /// Get a particular card on a profile.
+        /// Card IDs are their index in getCards(), starting a 1 and going up: 1, 2, 3, 4...
+        /// </summary>
+        /// <returns>The card.</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        /// <param name="cardId">Card identifier.</param>
+        public Card GetCard(string profileId, int cardId)
+        {
+            string url = BamboraUrls.CardsUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                .Replace("{id}", profileId)
+                + "/" + cardId;
 
-		/// <summary>
-		/// Deletes the profile.
-		/// </summary>
-		/// <returns>The profile response if successful, an error if not.</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		public ProfileResponse DeleteProfile(string profileId) {
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			string url = BamboraUrls.BaseProfilesUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform)
-				+"/"+profileId;
+            string response = req.ProcessTransaction(HttpMethod.Get, url);
 
+            ProfileCardsResponse cardResponse = JsonConvert.DeserializeObject<ProfileCardsResponse>(response);
+            if (cardResponse.Cards == null)
+                return null;
 
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
+            return cardResponse.Cards[0];
+        }
 
-			string response = req.ProcessTransaction (HttpMethod.Delete, url);
-			return JsonConvert.DeserializeObject<ProfileResponse>(response);
-		}
+        /// <summary>
+        /// Gets the cards contained on this profile.
+        /// It is possible for a profile not to contain any cards if it was created using a Legato token (single-use token)
+        /// </summary>
+        /// <returns>The cards.</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        public IList<Card> GetCards(string profileId)
+        {
+            string url = BamboraUrls.CardsUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                .Replace("{id}", profileId);
 
-		/// <summary>
-		/// Updates the profile. You must first retrieve the profile using ProfilesAPI.GetProfile(id)
-		/// </summary>
-		/// <returns>The profile response.</returns>
-		/// <param name="profile">Profile.</param>
-		public ProfileResponse UpdateProfile(PaymentProfile profile) {
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			string url = BamboraUrls.BaseProfilesUrl
-				.Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v"+_configuration.Version)
-				.Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
-				+"/"+profile.Id;
+            string response = req.ProcessTransaction(HttpMethod.Get, url);
+            ProfileCardsResponse cardResponse = JsonConvert.DeserializeObject<ProfileCardsResponse>(response);
 
+            if (cardResponse.Cards != null)
+            {
+                return cardResponse.Cards;
+            }
+            else
+                return new List<Card>(); // empty list with no cards
+        }
 
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
+        /// <summary>
+        /// Retrieve a profile using the profile's ID. If you want to modify a profile
+        /// you must first retrieve it using this method.
+        /// </summary>
+        /// <returns>The profile.</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        public PaymentProfile GetProfile(string profileId)
+        {
+            string url = BamboraUrls.BaseProfilesUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                + "/" + profileId;
 
-			var updateProfile = new {
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-				billing = profile.Billing,
-				custom = profile.CustomFields,
-				language = profile.Language,
-				comment = profile.Comment
-			};
+            string response = req.ProcessTransaction(HttpMethod.Get, url);
+            PaymentProfile profile = JsonConvert.DeserializeObject<PaymentProfile>(response);
+            profile.Id = profileId;
+            return profile;
+        }
 
-			string response = req.ProcessTransaction (HttpMethod.Put, url, updateProfile);
-			return JsonConvert.DeserializeObject<ProfileResponse>(response);
-		}
+        /// <summary>
+        /// Removes the card from the profile.
+        /// Card IDs are their index in getCards(), starting a 1 and going up: 1, 2, 3, 4...
+        /// </summary>
+        /// <returns>The card.</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        /// <param name="cardId">Card identifier.</param>
+        public ProfileResponse RemoveCard(string profileId, int cardId)
+        {
+            string url = BamboraUrls.CardsUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                .Replace("{id}", profileId)
+                + "/" + cardId;
 
-		/// <summary>
-		/// Gets the cards contained on this profile.
-		/// It is possible for a profile not to contain any cards if it was created using a Legato token (single-use token)
-		/// </summary>
-		/// <returns>The cards.</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		public IList<Card> GetCards(string profileId) {
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			string url = BamboraUrls.CardsUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform)
-				.Replace ("{id}", profileId);
+            string response = req.ProcessTransaction(HttpMethod.Delete, url);
+            return JsonConvert.DeserializeObject<ProfileResponse>(response);
+        }
 
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
+        /// <summary>
+        /// Updates the card on the profile.
+        /// </summary>
+        /// <returns>The result of the update</returns>
+        /// <param name="profileId">Profile identifier.</param>
+        /// <param name="card">Card.</param>
+        public ProfileResponse UpdateCard(string profileId, Card card)
+        {
+            string url = BamboraUrls.CardsUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                .Replace("{id}", profileId)
+                         + "/" + card.Id;
 
-			string response = req.ProcessTransaction (HttpMethod.Get, url);
-			ProfileCardsResponse cardResponse = JsonConvert.DeserializeObject<ProfileCardsResponse>(response);
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			if (cardResponse.Cards != null) {
-				return cardResponse.Cards;
-			} else 
-				return new List<Card>(); // empty list with no cards
-		}
+            if (card.Number.Contains("X"))
+                card.Number = null; // when a card is returned from the server the number will be masked with X's. We don't want to submit that back.
 
-		/// <summary>
-		/// Get a particular card on a profile.
-		/// Card IDs are their index in getCards(), starting a 1 and going up: 1, 2, 3, 4...
-		/// </summary>
-		/// <returns>The card.</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		/// <param name="cardId">Card identifier.</param>
-		public Card GetCard(string profileId, int cardId) {
+            // the json wants to be wrapped in a 'card' group
+            var c = new
+            {
+                card
+            };
 
-			string url = BamboraUrls.CardsUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform)
-				.Replace ("{id}", profileId)
-				+"/"+cardId;
+            string response = req.ProcessTransaction(HttpMethod.Put, url, c);
+            return JsonConvert.DeserializeObject<ProfileResponse>(response);
+        }
 
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
+        /// <summary>
+        /// Updates the profile. You must first retrieve the profile using ProfilesAPI.GetProfile(id)
+        /// </summary>
+        /// <returns>The profile response.</returns>
+        /// <param name="profile">Profile.</param>
+        public ProfileResponse UpdateProfile(PaymentProfile profile)
+        {
+            string url = BamboraUrls.BaseProfilesUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform)
+                + "/" + profile.Id;
 
-			string response = req.ProcessTransaction (HttpMethod.Get, url);
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			ProfileCardsResponse cardResponse = JsonConvert.DeserializeObject<ProfileCardsResponse>(response);
-			if (cardResponse.Cards == null)
-				return null;
-			
-			return cardResponse.Cards[0];
-		}
+            var updateProfile = new
+            {
+                billing = profile.Billing,
+                custom = profile.CustomFields,
+                language = profile.Language,
+                comment = profile.Comment
+            };
 
-		/// <summary>
-		/// Updates the card on the profile.
-		/// </summary>
-		/// <returns>The result of the update</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		/// <param name="card">Card.</param>
-		public ProfileResponse UpdateCard(string profileId, Card card) {
+            string response = req.ProcessTransaction(HttpMethod.Put, url, updateProfile);
+            return JsonConvert.DeserializeObject<ProfileResponse>(response);
+        }
 
-			string url = BamboraUrls.CardsUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform)
-				.Replace ("{id}", profileId)
-			             + "/" + card.Id;
+        private ProfileResponse CreateProfile(Token token, Card card, Address billingAddress, CustomFields customFields, string language, string comment)
+        {
+            if (token == null && card == null)
+            {
+                Gateway.ThrowIfNullArgument(null, "Card and Token both null!");
+            }
 
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
+            if (token == null)
+            {
+                Gateway.ThrowIfNullArgument(card, "card");
+                Gateway.ThrowIfNullArgument(card.Number, "card.number");
+                Gateway.ThrowIfNullArgument(card.Name, "card.name");
+                Gateway.ThrowIfNullArgument(card.ExpiryMonth, "card.expiryMonth");
+                Gateway.ThrowIfNullArgument(card.ExpiryYear, "card.expiryYear");
+            }
+            if (card == null)
+            {
+                Gateway.ThrowIfNullArgument(token, "token");
+                Gateway.ThrowIfNullArgument(token.Name, "token.name");
+                Gateway.ThrowIfNullArgument(token.Code, "token.code");
+            }
 
-			if (card.Number.Contains ("X") )
-				card.Number = null; // when a card is returned from the server the number will be masked with X's. We don't want to submit that back.
+            string url = BamboraUrls.BaseProfilesUrl
+                .Replace("{v}", String.IsNullOrEmpty(_configuration.Version) ? "v1" : "v" + _configuration.Version)
+                .Replace("{p}", String.IsNullOrEmpty(_configuration.Platform) ? "www" : _configuration.Platform);
 
-			// the json wants to be wrapped in a 'card' group
-			var c = new {
-				card
-			};
+            HttpsWebRequest req = new HttpsWebRequest(_logger)
+            {
+                MerchantId = _configuration.MerchantId,
+                Passcode = _configuration.ProfilesApiPasscode,
+                WebCommandExecutor = _webCommandExecuter
+            };
 
-			string response = req.ProcessTransaction (HttpMethod.Put, url, c);
-			return JsonConvert.DeserializeObject<ProfileResponse>(response);
-		}
+            var profile = new
+            {
+                card = card,
+                token = token,
+                billing = billingAddress,
+                custom = customFields
+            };
 
-		/// <summary>
-		/// Add a new card to the profile. It gets appended to the end of the list of cards.
-		/// Make sure your Merchant account can support more cards. The default amount is 1.
-		/// You can change this limit in the online Members area for Merchants located at:
-		/// https://web.na.bambora.com/admin/sDefault.asp
-		/// and heading to Configuration -> Payment Profile Configuration
-		/// </summary>
-		/// <returns>The response</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		/// <param name="card">Card.</param>
-		public ProfileResponse AddCard(string profileId, Card card) {
+            string response = req.ProcessTransaction(HttpMethod.Post, url, profile);
 
-			string url = BamboraUrls.CardsUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform)
-				.Replace ("{id}", profileId);
-
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
-
-			// the json wants to be wrapped in a 'card' group
-			var c = new {
-				card
-			};
-
-			string response = req.ProcessTransaction (HttpMethod.Post, url, c);
-			return JsonConvert.DeserializeObject<ProfileResponse>(response);
-		}
-
-		/// <summary>
-		/// Add a new tokenized card to the profile. It gets appended to the end of the list of cards.
-		/// Make sure your Merchant account can support more cards. The default amount is 1.
-		/// You can change this limit in the online Members area for Merchants located at:
-		/// https://web.na.bambora.com/admin/sDefault.asp
-		/// and heading to Configuration -> Payment Profile Configuration
-		/// </summary>
-		/// <returns>The response</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		/// <param name="card">Card.</param>
-		public ProfileResponse AddCard(string profileId, Token token) {
-
-			string url = BamboraUrls.CardsUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform)
-				.Replace ("{id}", profileId);
-
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
-
-			// the json wants to be wrapped in a 'token' group
-			var c = new {
-				token
-			};
-
-			string response = req.ProcessTransaction (HttpMethod.Post, url, c);
-			return JsonConvert.DeserializeObject<ProfileResponse>(response);
-		}
-
-		/// <summary>
-		/// Removes the card from the profile.
-		/// Card IDs are their index in getCards(), starting a 1 and going up: 1, 2, 3, 4...
-		/// </summary>
-		/// <returns>The card.</returns>
-		/// <param name="profileId">Profile identifier.</param>
-		/// <param name="cardId">Card identifier.</param>
-		public ProfileResponse RemoveCard(string profileId, int cardId) {
-
-			string url = BamboraUrls.CardsUrl
-				.Replace ("{v}", String.IsNullOrEmpty (_configuration.Version) ? "v1" : "v" + _configuration.Version)
-				.Replace ("{p}", String.IsNullOrEmpty (_configuration.Platform) ? "www" : _configuration.Platform)
-				.Replace ("{id}", profileId)
-				+"/"+cardId;
-
-			HttpsWebRequest req = new HttpsWebRequest () {
-				MerchantId = _configuration.MerchantId,
-				Passcode = _configuration.ProfilesApiPasscode,
-				WebCommandExecutor = _webCommandExecuter
-			};
-
-			string response = req.ProcessTransaction (HttpMethod.Delete, url);
-			return JsonConvert.DeserializeObject<ProfileResponse>(response);
-		}
-
-
-	}
+            return JsonConvert.DeserializeObject<ProfileResponse>(response);
+        }
+    }
 }
-
